@@ -436,7 +436,50 @@ function detectTestsAndDocs(rootPath) {
 }
 
 // ============================================================================
-// 4. MAIN OPENCODE PLUGIN
+// 4. CONTEXT BLOCK BUILDING
+// ============================================================================
+function buildContextBlock(rootPath, config, currentPercentage, currentTokens) {
+  const { treeText, totalCounted, truncated } = generateBoundedTree(rootPath, {
+    ...config,
+    ignoreMatcher: loadIgnoreMatcher(rootPath),
+  });
+  const truncationWarning = truncated ? `\n> ⚠️ *Tree truncated at ${totalCounted} files to save tokens.*` : "";
+
+  const gitStatus = generateGitStatus(rootPath);
+  const gitBlock = gitStatus
+    ? `### GIT STATUS ###
+\`\`\`text
+${gitStatus.summary}\`\`\`
+`
+    : "";
+
+  const depsLine = config.enableDependencies ? analyzeProjectDependencies(rootPath) : null;
+  const depsBlock = depsLine ? `### PROJECT METADATA ###
+${depsLine}
+
+` : "";
+
+  const testsDocs = config.enableTestsDocs ? detectTestsAndDocs(rootPath) : null;
+  const testsDocsBlock = testsDocs ? `### TESTS & DOCS ###
+\`\`\`text
+${testsDocs}\`\`\`
+
+` : "";
+
+  return `${SYSTEM_TAG}
+### PROJECT STRUCTURE ###
+\`\`\`text
+${treeText}\`\`\`${truncationWarning}
+
+${depsBlock}${testsDocsBlock}${gitBlock}### PERSISTENT TECHNICAL STATE ###
+- Modified files in session: ${Array.from(technicalState.modifiedFiles).join(", ") || "None"}
+- Recorded decisions: ${Array.from(technicalState.recordedDecisions).join(" | ") || "None"}
+- Context usage on send: ~${currentPercentage}% (${currentTokens} tokens)
+`;
+}
+
+// ============================================================================
+// 5. MAIN OPENCODE PLUGIN
 // ============================================================================
 export default async function OpenCodeContextCompressorPlugin(context) {
   const ROOT_PATH = process.cwd();
@@ -456,6 +499,10 @@ export default async function OpenCodeContextCompressorPlugin(context) {
           description: "Reset saved files/decisions after a focus change",
           template: "The user changed focus. Reset the saved modified files and recorded decisions. Acknowledge briefly.",
         };
+        cfg.command["resumator-context"] = {
+          description: "Inject the current project context (tree, git status, metadata, tests/docs, technical state)",
+          template: "The user requested the current project context. Review it and acknowledge.",
+        };
       },
       "command.execute.before": async ({ command }, output) => {
         if (command === "resumator-clear") {
@@ -465,6 +512,15 @@ export default async function OpenCodeContextCompressorPlugin(context) {
             {
               type: "text",
               text: "[Resumator] Session state cleared: modified files and recorded decisions reset.",
+            },
+          ];
+        } else if (command === "resumator-context") {
+          const currentTokens = estimateTokens(output.parts);
+          const currentPercentage = ((currentTokens / config.totalModelLimit) * 100).toFixed(1);
+          output.parts = [
+            {
+              type: "text",
+              text: buildContextBlock(ROOT_PATH, config, currentPercentage, currentTokens),
             },
           ];
         }
@@ -506,45 +562,9 @@ export default async function OpenCodeContextCompressorPlugin(context) {
           ];
         }
 
-        const { treeText, totalCounted, truncated } = generateBoundedTree(ROOT_PATH, {
-          ...config,
-          ignoreMatcher: loadIgnoreMatcher(ROOT_PATH),
-        });
-        const truncationWarning = truncated ? `\n> ⚠️ *Tree truncated at ${totalCounted} files to save tokens.*` : "";
-
-        const gitStatus = generateGitStatus(ROOT_PATH);
-        const gitBlock = gitStatus
-          ? `### GIT STATUS ###
-\`\`\`text
-${gitStatus.summary}\`\`\`
-`
-          : "";
-
-        const depsLine = config.enableDependencies ? analyzeProjectDependencies(ROOT_PATH) : null;
-        const depsBlock = depsLine ? `### PROJECT METADATA ###
-${depsLine}
-
-` : "";
-
-        const testsDocs = config.enableTestsDocs ? detectTestsAndDocs(ROOT_PATH) : null;
-        const testsDocsBlock = testsDocs ? `### TESTS & DOCS ###
-\`\`\`text
-${testsDocs}\`\`\`
-
-` : "";
-
         const systemPrompt = {
           role: "system",
-          content: `${SYSTEM_TAG}
-### PROJECT STRUCTURE ###
-\`\`\`text
-${treeText}\`\`\`${truncationWarning}
-
-${depsBlock}${testsDocsBlock}${gitBlock}### PERSISTENT TECHNICAL STATE ###
-- Modified files in session: ${Array.from(technicalState.modifiedFiles).join(", ") || "None"}
-- Recorded decisions: ${Array.from(technicalState.recordedDecisions).join(" | ") || "None"}
-- Context usage on send: ~${currentPercentage}% (${currentTokens} tokens)
-`,
+          content: buildContextBlock(ROOT_PATH, config, currentPercentage, currentTokens),
         };
 
         return {
@@ -555,4 +575,4 @@ ${depsBlock}${testsDocsBlock}${gitBlock}### PERSISTENT TECHNICAL STATE ###
   };
 }
 
-export { loadIgnoreMatcher, generateBoundedTree, analyzeProjectDependencies, detectTestsAndDocs, resetTechnicalState, loadTechnicalState, saveTechnicalState, DEFAULT_IGNORED };
+export { loadIgnoreMatcher, generateBoundedTree, buildContextBlock, analyzeProjectDependencies, detectTestsAndDocs, resetTechnicalState, loadTechnicalState, saveTechnicalState, DEFAULT_IGNORED };

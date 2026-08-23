@@ -10,6 +10,7 @@ Automated context compression and project tree mapping plugin for OpenCode.
 - **Smart Git Status Awareness:** Injects the current branch, staged/modified/untracked files, and recent commits into the system prompt. Omitted automatically when not in a git repo.
 - **Advanced Project Mapping:** Injects the runtime and key dependencies from the manifest (`package.json`, `pyproject.toml`, or `Cargo.toml`), plus a static block pointing to where tests and docs live so the agent knows how to run verifications without listing every route.
 - **Manual State Reset:** The `/resumator-clear` command (registered automatically by the plugin) zeroes the saved modified files and recorded decisions when the conversation changes focus.
+- **Manual Context Injection:** The `/resumator-context` command (registered automatically) injects the full project context (tree, git status, metadata, tests/docs, technical state) on demand, without waiting for the automatic trigger.
 - **Disk Persistence:** Technical state is saved in compact TOON format (Token-Oriented Object Notation, token-efficient for LLMs) to `.opencode/resumator-state.toon` in the project root and reloaded on startup, so plugin memory survives closing and reopening the terminal. Legacy `.json` state is migrated automatically.
 
 ## Installation

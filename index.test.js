@@ -225,6 +225,12 @@ test("config hook registers the resumator-clear command", async () => {
   assert.ok(cfg.command["resumator-clear"], "resumator-clear is registered");
   assert.equal(cfg.command["resumator-clear"].description, "Reset saved files/decisions after a focus change");
   assert.ok(cfg.command["resumator-clear"].template.length > 0);
+  assert.ok(cfg.command["resumator-context"], "resumator-context is registered");
+  assert.equal(
+    cfg.command["resumator-context"].description,
+    "Inject the current project context (tree, git status, metadata, tests/docs, technical state)",
+  );
+  assert.ok(cfg.command["resumator-context"].template.length > 0);
 });
 
 test("command.execute.before clears state and replaces parts for resumator-clear", async () => {
@@ -236,6 +242,32 @@ test("command.execute.before clears state and replaces parts for resumator-clear
   );
   assert.equal(output.parts.length, 1);
   assert.match(output.parts[0].text, /Session state cleared/);
+});
+
+test("command.execute.before injects context block for resumator-context", async () => {
+  const plugin = await pluginModule.default({});
+  const output = { parts: [{ type: "text", text: "original" }] };
+  await plugin.hooks["command.execute.before"](
+    { command: "resumator-context", sessionID: "s", arguments: "" },
+    output,
+  );
+  assert.equal(output.parts.length, 1);
+  const text = output.parts[0].text;
+  assert.match(text, /### PROJECT STRUCTURE ###/);
+  assert.match(text, /### PERSISTENT TECHNICAL STATE ###/);
+});
+
+test("buildContextBlock returns the full context block", async () => {
+  const root = process.cwd();
+  const block = pluginModule.buildContextBlock(
+    root,
+    { totalModelLimit: 128000, enableDependencies: true, enableTestsDocs: true },
+    0.1,
+    12,
+  );
+  assert.match(block, /### PROJECT STRUCTURE ###/);
+  assert.match(block, /### PERSISTENT TECHNICAL STATE ###/);
+  assert.match(block, /Context usage on send: ~0.1% \(12 tokens\)/);
 });
 
 test("command.execute.before leaves other commands untouched", async () => {
