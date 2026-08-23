@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { get_encoding } from "tiktoken";
 
 // ============================================================================
 // 1. CONFIGURATION & CONSTANTS WITH FALLBACK DEFAULTS
@@ -55,10 +56,26 @@ let technicalState = {
 // ============================================================================
 // 3. UTILITY FUNCTIONS
 // ============================================================================
+let cachedEncoding = null;
+
+function getTokenCounter() {
+  try {
+    if (!cachedEncoding) {
+      cachedEncoding = get_encoding("cl100k_base");
+    }
+    return (text) => cachedEncoding.encode(text).length;
+  } catch (err) {
+    console.warn("[Plugin] tiktoken unavailable, falling back to char/4 heuristic:", err.message);
+    return (text) => Math.ceil(text.length / 4);
+  }
+}
+
+const countTokens = getTokenCounter();
+
 function estimateTokens(messages) {
   return messages.reduce((acc, msg) => {
     const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content || "");
-    return acc + Math.ceil(content.length / 4);
+    return acc + countTokens(content);
   }, 0);
 }
 

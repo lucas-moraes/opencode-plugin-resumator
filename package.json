@@ -36,5 +36,8 @@
   "homepage": "https://github.com/yourusername/opencode-plugin-context-compressor#readme",
   "engines": {
     "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "tiktoken": "^1.0.22"
   }
 }
