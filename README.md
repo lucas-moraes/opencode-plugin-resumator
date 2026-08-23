@@ -24,7 +24,7 @@ npm install opencode-plugin-resumator
 ```bash
 npm install   # installs tiktoken + ignore + smol-toml + @toon-format/toon
 npm test      # runs node --test on *.test.js
-npm run release  # bumps patch version, tags it, and pushes (triggers CI publish)
+npm run release  # tags and pushes the version from package.json (triggers CI publish)
 ```
 
 ## Configuration
