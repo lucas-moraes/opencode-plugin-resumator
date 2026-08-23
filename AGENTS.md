@@ -5,7 +5,7 @@ Single-file ESM OpenCode plugin. All logic lives in `index.js` (no build step, n
 ## Commands
 
 - `npm test` — runs `node --test` on `*.test.js` files (see `index.test.js`). `prepublishOnly` runs the same command.
-- `npm run release` — runs tests, creates a tag `v$npm_package_version` from the version you set in `package.json`, and pushes with tags, triggering the GitHub Actions `publish` workflow (`.github/workflows/publish.yml`). Commit the version bump before running it.
+- `npm run release` — runs tests, creates a tag `v$npm_package_version` from the version you set in `package.json`, then pushes the branch (`git push origin`) and the tag explicitly (`git push origin v$npm_package_version`), triggering the GitHub Actions `publish` workflow (`.github/workflows/publish.yml`). Commit the version bump before running it. Note: avoid `--follow-tags` — it silently skips the tag when the branch is already up-to-date.
 - No lint, typecheck, or build scripts.
 
 ## Architecture
