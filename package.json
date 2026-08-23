@@ -1,6 +1,6 @@
 {
   "name": "opencode-plugin-resumator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "An automated OpenCode plugin for context compression, project tree mapping, and technical state retention triggered at 30% context capacity.",
   "type": "module",
   "main": "./index.js",
@@ -38,6 +38,8 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "ignore": "^7.0.6",
+    "smol-toml": "^1.8.0",
     "tiktoken": "^1.0.22"
   }
 }

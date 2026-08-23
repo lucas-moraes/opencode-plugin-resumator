@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Single-file ESM OpenCode plugin. All logic lives in `index.js` (no build step, no TS, no deps). Entrypoint: default export `OpenCodeContextCompressorPlugin(context)` (index.js:146).
+Single-file ESM OpenCode plugin. All logic lives in `index.js` (no build step, no TS). Entrypoint: default export `OpenCodeContextCompressorPlugin(context)` (index.js:146).
 
 ## Commands
 
@@ -14,9 +14,16 @@ Single-file ESM OpenCode plugin. All logic lives in `index.js` (no build step, n
 - Config is read live from `opencode.json` at the cwd root under the `contextCompressor` key (index.js:21-45). No schema; unrecognized keys fall back to `DEFAULT_CONFIG` (index.js:10).
 - Token counting uses the `tiktoken` package (`get_encoding("cl100k_base")`), cached in a module-level lazy encoder (index.js:56-73). If tiktoken fails to load, it falls back to a crude `ceil(chars / 4)` heuristic. Trigger at 30% of `totalModelLimit` (128000 default).
 - The generated system prompt is tagged with `SYSTEM_TAG` (index.js:7) and stripped before token counting to avoid double-counting (index.js:158-160).
+- Git status is injected into the system prompt via `git` CLI subprocess calls (`git status --porcelain -b`, `git rev-parse`, `git log`) (index.js:163-217). If the cwd is not a git repo, the block is omitted entirely — never fails the hook.
+- Tree pruning uses the `ignore` package (index.js:60-74). It reads the **root** `.gitignore` and merges it with `DEFAULT_IGNORED` (`node_modules`, `dist`, `build`, `coverage`, `.cache`). The matcher is rebuilt on every `chat:before-send` so `.gitignore` changes take effect immediately.
+- Project metadata (runtime + deps) is analyzed from the manifest via `analyzeProjectDependencies` (index.js:319, parsing at index.js:257-327): `package.json` (JSON.parse), `pyproject.toml` and `Cargo.toml` (via `smol-toml`). TOML keys preserve hyphens (`requires-python`, `rust-version`, `dev-dependencies`) — read them with bracket access `["requires-python"]`, not dot notation.
+- `detectTestsAndDocs` (index.js:334-349) scans the root for test dirs/files (`tests/`, `__tests__/`, `*.test.js`/`*.spec.js`) and docs (`README.md`, `docs/`), plus the `scripts.test` command from `package.json`.
+- Both metadata and tests/docs blocks are gated by config flags `enableDependencies`/`enableTestsDocs` (default `true`) in `opencode.json` under `contextCompressor`.
+- The plugin also registers a `/resumator-clear` command (via the `config` hook) and resets session state in the `command.execute.before` hook (index.js:386-403). `resetTechnicalState` is the exported helper that zeroes `modifiedFiles`/`recordedDecisions`.
+- `technicalState` is persisted to disk at `ROOT_PATH/.opencode/resumator-state.json` (index.js:68-108). It's loaded at plugin instantiation (`loadTechnicalState`, index.js:429) and saved after every `chat:before-send` mutation and on `/resumator-clear` (`saveTechnicalState`), so memory survives terminal close/reopen. Writes are atomic (tmp + rename); all disk ops are wrapped in `try/catch` and never break the hook.
 
 ## Conventions / gotchas
 
-- Only runtime dependency is `tiktoken` (WASM encoding tables). `files` in package.json lists only `index.js`, `README.md`, `LICENSE`; the dep is resolved by npm at install time.
+- Runtime dependencies are `tiktoken` (WASM encoding tables), `ignore` (.gitignore parsing), and `smol-toml` (TOML parsing). `files` in package.json lists only `index.js`, `README.md`, `LICENSE`; deps are resolved by npm at install time.
 - Session state (`technicalState`, index.js:50) is module-level and persists across calls in one process.
-- `IGNORED_PATHS` (index.js:8) is a `Set` used for tree pruning; tree is bounded by `maxTreeFiles`/`maxTreeDepth`.
+- `generateBoundedTree`, `loadIgnoreMatcher`, `analyzeProjectDependencies`, `detectTestsAndDocs`, `resetTechnicalState`, `loadTechnicalState`, and `saveTechnicalState` are also exported as named exports (index.js:538) for deterministic testing. The ignore matcher is passed via `config.ignoreMatcher`; directory paths are checked with a trailing `/` so `dir/` gitignore rules match correctly.
