@@ -4,6 +4,7 @@ import { execSync } from "child_process";
 import { get_encoding } from "tiktoken";
 import ignore from "ignore";
 import { parse as parseToml } from "smol-toml";
+import { encode as encodeToon, decode as decodeToon } from "@toon-format/toon";
 
 // ============================================================================
 // 1. CONFIGURATION & CONSTANTS WITH FALLBACK DEFAULTS
@@ -69,21 +70,39 @@ function resetTechnicalState() {
 // 2a. DISK PERSISTENCE
 // ============================================================================
 function stateFilePath(rootPath) {
+  return path.join(rootPath, ".opencode", "resumator-state.toon");
+}
+
+function legacyStateFilePath(rootPath) {
   return path.join(rootPath, ".opencode", "resumator-state.json");
+}
+
+function migrateLegacyState(rootPath) {
+  const legacy = legacyStateFilePath(rootPath);
+  const current = stateFilePath(rootPath);
+  if (fs.existsSync(legacy) && !fs.existsSync(current)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(legacy, "utf8"));
+      technicalState = {
+        modifiedFiles: new Set(Array.isArray(parsed.modifiedFiles) ? parsed.modifiedFiles : []),
+        recordedDecisions: new Set(Array.isArray(parsed.recordedDecisions) ? parsed.recordedDecisions : []),
+      };
+      saveTechnicalState(rootPath);
+      fs.rmSync(legacy, { force: true });
+    } catch (err) {
+      console.warn("[Plugin] Failed to migrate legacy state:", err.message);
+    }
+  }
 }
 
 function saveTechnicalState(rootPath) {
   try {
     const file = stateFilePath(rootPath);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const payload = JSON.stringify(
-      {
-        modifiedFiles: Array.from(technicalState.modifiedFiles),
-        recordedDecisions: Array.from(technicalState.recordedDecisions),
-      },
-      null,
-      2,
-    );
+    const payload = encodeToon({
+      modifiedFiles: Array.from(technicalState.modifiedFiles),
+      recordedDecisions: Array.from(technicalState.recordedDecisions),
+    });
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, payload);
     fs.renameSync(tmp, file);
@@ -94,11 +113,12 @@ function saveTechnicalState(rootPath) {
 
 function loadTechnicalState(rootPath) {
   try {
+    migrateLegacyState(rootPath);
     const file = stateFilePath(rootPath);
     if (!fs.existsSync(file)) {
       return { modifiedFiles: new Set(), recordedDecisions: new Set() };
     }
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    const parsed = decodeToon(fs.readFileSync(file, "utf8"));
     return {
       modifiedFiles: new Set(Array.isArray(parsed.modifiedFiles) ? parsed.modifiedFiles : []),
       recordedDecisions: new Set(Array.isArray(parsed.recordedDecisions) ? parsed.recordedDecisions : []),

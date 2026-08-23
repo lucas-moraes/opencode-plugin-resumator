@@ -265,7 +265,7 @@ test("resetTechnicalState clears modified files and decisions", async () => {
   assert.match(sys2, /Recorded decisions: None/);
 });
 
-test("saveTechnicalState and loadTechnicalState round-trip", () => {
+test("saveTechnicalState and loadTechnicalState round-trip (TOON)", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "resumator-"));
   try {
     // Populate module state through a chat send (also persists to repo cwd),
@@ -278,10 +278,11 @@ test("saveTechnicalState and loadTechnicalState round-trip", () => {
         client: { chat: async () => ({ content: "s" }) },
       });
 
-      // Copy the freshly-saved file into the temp root to simulate persisted state
-      const srcFile = path.join(process.cwd(), ".opencode", "resumator-state.json");
+      // Copy the freshly-saved TOON file into the temp root to simulate persisted state
+      const srcFile = path.join(process.cwd(), ".opencode", "resumator-state.toon");
       fs.mkdirSync(path.join(root, ".opencode"), { recursive: true });
-      fs.copyFileSync(srcFile, path.join(root, ".opencode", "resumator-state.json"));
+      fs.copyFileSync(srcFile, path.join(root, ".opencode", "resumator-state.toon"));
+      assert.match(fs.readFileSync(path.join(root, ".opencode", "resumator-state.toon"), "utf8"), /^modifiedFiles\[\d+\]:/);
 
       const loaded = pluginModule.loadTechnicalState(root);
       assert.ok([...loaded.modifiedFiles].includes("src/a.js"));
@@ -309,14 +310,33 @@ test("loadTechnicalState returns empty state when no file exists", () => {
   }
 });
 
-test("loadTechnicalState handles corrupt JSON gracefully", () => {
+test("loadTechnicalState handles corrupt TOON gracefully", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "resumator-"));
   try {
     fs.mkdirSync(path.join(root, ".opencode"));
-    fs.writeFileSync(path.join(root, ".opencode", "resumator-state.json"), "{ not valid json ");
+    fs.writeFileSync(path.join(root, ".opencode", "resumator-state.toon"), "modifiedFiles[ not valid toon");
     const state = pluginModule.loadTechnicalState(root);
     assert.deepEqual([...state.modifiedFiles], []);
     assert.deepEqual([...state.recordedDecisions], []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadTechnicalState migrates legacy JSON state to TOON", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "resumator-"));
+  try {
+    fs.mkdirSync(path.join(root, ".opencode"));
+    fs.writeFileSync(
+      path.join(root, ".opencode", "resumator-state.json"),
+      JSON.stringify({ modifiedFiles: ["src/legacy.js"], recordedDecisions: ["Decision: keep"] }),
+    );
+    const state = pluginModule.loadTechnicalState(root);
+    assert.deepEqual([...state.modifiedFiles], ["src/legacy.js"]);
+    assert.deepEqual([...state.recordedDecisions], ["Decision: keep"]);
+    // legacy removed, TOON created
+    assert.ok(!fs.existsSync(path.join(root, ".opencode", "resumator-state.json")));
+    assert.ok(fs.existsSync(path.join(root, ".opencode", "resumator-state.toon")));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
