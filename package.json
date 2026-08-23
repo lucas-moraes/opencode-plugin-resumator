@@ -2,6 +2,7 @@
   "name": "opencode-plugin-resumator",
   "version": "0.3.0",
   "description": "An automated OpenCode plugin for context compression, project tree mapping, and technical state retention triggered at 30% context capacity.",
+  "author": "Lucas Moraes",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -24,16 +25,15 @@
     "llm-memory",
     "context-window"
   ],
-  "author": "Your Name <your.email@example.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yourusername/opencode-plugin-context-compressor.git"
+    "url": "git+https://github.com/lucas-moraes/opencode-plugin-resumator.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/opencode-plugin-context-compressor/issues"
+    "url": "https://github.com/lucas-moraes/opencode-plugin-resumator/issues"
   },
-  "homepage": "https://github.com/yourusername/opencode-plugin-context-compressor#readme",
+  "homepage": "https://github.com/lucas-moraes/opencode-plugin-resumator#readme",
   "engines": {
     "node": ">=18.0.0"
   },
