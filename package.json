@@ -1,6 +1,6 @@
 {
   "name": "opencode-plugin-resumator",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "An automated OpenCode plugin for context compression, project tree mapping, and technical state retention triggered at 30% context capacity.",
   "author": "Lucas Moraes",
   "type": "module",
@@ -10,6 +10,7 @@
   },
   "files": [
     "index.js",
+    "index.internal.js",
     "README.md",
     "LICENSE"
   ],

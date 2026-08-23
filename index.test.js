@@ -5,7 +5,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const pluginModule = await import("./index.js");
+const pluginModule = await import("./index.internal.js");
 
 function freshContext() {
   return {
