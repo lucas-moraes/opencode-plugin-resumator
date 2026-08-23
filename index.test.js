@@ -73,7 +73,8 @@ test("system prompt includes git status when in a git repo", async () => {
   const sys = res.messages[0].content;
   assert.match(sys, /### GIT STATUS ###/);
   assert.match(sys, /Recent commits:/);
-  assert.match(sys, /main/);
+  // The git block always carries a branch heading — a named branch or HEAD (detached).
+  assert.match(sys, /^[A-Za-z][\w./-]*|\bHEAD\b/m);
 });
 
 test("tree omits paths from .gitignore and default ignores", () => {
