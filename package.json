@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "test": "node --test",
-    "prepublishOnly": "npm run test"
+    "prepublishOnly": "npm run test",
+    "release": "npm test && npm version patch && git push --follow-tags"
   },
   "keywords": [
     "opencode",
