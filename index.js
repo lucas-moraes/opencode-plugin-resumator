@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import { execSync } from "child_process";
-import { get_encoding } from "tiktoken";
 import ignore from "ignore";
 import { parse as parseToml } from "smol-toml";
 import { encode as encodeToon, decode as decodeToon } from "@toon-format/toon";
@@ -149,20 +148,22 @@ function loadIgnoreMatcher(rootPath) {
 // 3. UTILITY FUNCTIONS
 // ============================================================================
 let cachedEncoding = null;
+let tiktokenModule = null;
+let countTokens = (text) => Math.ceil(text.length / 4);
 
-function getTokenCounter() {
+async function initTokenCounter() {
   try {
-    if (!cachedEncoding) {
-      cachedEncoding = get_encoding("cl100k_base");
+    if (!tiktokenModule) {
+      tiktokenModule = await import("tiktoken");
     }
-    return (text) => cachedEncoding.encode(text).length;
+    if (!cachedEncoding) {
+      cachedEncoding = tiktokenModule.get_encoding("cl100k_base");
+    }
+    countTokens = (text) => cachedEncoding.encode(text).length;
   } catch (err) {
     console.warn("[Plugin] tiktoken unavailable, falling back to char/4 heuristic:", err.message);
-    return (text) => Math.ceil(text.length / 4);
   }
 }
-
-const countTokens = getTokenCounter();
 
 function estimateTokens(messages) {
   return messages.reduce((acc, msg) => {
@@ -484,6 +485,9 @@ ${depsBlock}${testsDocsBlock}${gitBlock}### PERSISTENT TECHNICAL STATE ###
 async function OpenCodeContextCompressorPlugin(context) {
   const ROOT_PATH = process.cwd();
 
+  // Initialize token counter (tiktoken, with char/4 fallback if it cannot load)
+  await initTokenCounter();
+
   // Load configuration dynamically from opencode.json
   const config = loadUserConfig(ROOT_PATH);
   const tokenTriggerThreshold = Math.floor(config.totalModelLimit * config.triggerPercentage);
@@ -575,5 +579,5 @@ async function OpenCodeContextCompressorPlugin(context) {
   };
 }
 
-export { loadIgnoreMatcher, generateBoundedTree, buildContextBlock, analyzeProjectDependencies, detectTestsAndDocs, resetTechnicalState, loadTechnicalState, saveTechnicalState, DEFAULT_IGNORED, OpenCodeContextCompressorPlugin };
+export { loadIgnoreMatcher, generateBoundedTree, buildContextBlock, analyzeProjectDependencies, detectTestsAndDocs, resetTechnicalState, loadTechnicalState, saveTechnicalState, OpenCodeContextCompressorPlugin };
 export default OpenCodeContextCompressorPlugin;
