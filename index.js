@@ -481,7 +481,7 @@ ${depsBlock}${testsDocsBlock}${gitBlock}### PERSISTENT TECHNICAL STATE ###
 // ============================================================================
 // 5. MAIN OPENCODE PLUGIN
 // ============================================================================
-export default async function OpenCodeContextCompressorPlugin(context) {
+async function OpenCodeContextCompressorPlugin(context) {
   const ROOT_PATH = process.cwd();
 
   // Load configuration dynamically from opencode.json
@@ -575,4 +575,5 @@ export default async function OpenCodeContextCompressorPlugin(context) {
   };
 }
 
-export { loadIgnoreMatcher, generateBoundedTree, buildContextBlock, analyzeProjectDependencies, detectTestsAndDocs, resetTechnicalState, loadTechnicalState, saveTechnicalState, DEFAULT_IGNORED };
+export { loadIgnoreMatcher, generateBoundedTree, buildContextBlock, analyzeProjectDependencies, detectTestsAndDocs, resetTechnicalState, loadTechnicalState, saveTechnicalState, DEFAULT_IGNORED, OpenCodeContextCompressorPlugin };
+export default OpenCodeContextCompressorPlugin;
