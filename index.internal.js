@@ -165,10 +165,34 @@ async function initTokenCounter() {
   }
 }
 
-function estimateTokens(messages) {
-  return messages.reduce((acc, msg) => {
-    const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content || "");
-    return acc + countTokens(content);
+function textFromPart(part) {
+  if (!part || typeof part !== "object") return "";
+  if (typeof part.text === "string") return part.text;
+  if (typeof part.content === "string") return part.content;
+  return "";
+}
+
+function textsFromMessage(msg) {
+  if (!msg || typeof msg !== "object") return [];
+  if (typeof msg.content === "string") return [msg.content];
+  if (Array.isArray(msg.parts)) return msg.parts.map(textFromPart).filter(Boolean);
+  if (Array.isArray(msg.content)) return msg.content.map(textFromPart).filter(Boolean);
+  return [];
+}
+
+function estimateTokens(messagesOrParts) {
+  if (!Array.isArray(messagesOrParts)) return 0;
+  return messagesOrParts.reduce((acc, item) => {
+    if (typeof item === "string") return acc + countTokens(item);
+    if (item && typeof item === "object" && (item.type === "text" || typeof item.text === "string")) {
+      return acc + countTokens(textFromPart(item));
+    }
+    const texts = textsFromMessage(item);
+    if (texts.length) return acc + texts.reduce((sum, t) => sum + countTokens(t), 0);
+    if (item && typeof item.content !== "undefined") {
+      return acc + countTokens(typeof item.content === "string" ? item.content : JSON.stringify(item.content || ""));
+    }
+    return acc;
   }, 0);
 }
 
@@ -184,6 +208,28 @@ function extractCriticalData(text) {
   if (text.includes("Decision:") || text.includes("Decided:")) {
     technicalState.recordedDecisions.add(text);
   }
+}
+
+function extractCriticalDataFromMessages(messages) {
+  if (!Array.isArray(messages)) return;
+  for (const msg of messages) {
+    for (const text of textsFromMessage(msg)) {
+      extractCriticalData(text);
+    }
+  }
+}
+
+function buildCompactionContext(rootPath, config) {
+  const depsLine = config.enableDependencies ? analyzeProjectDependencies(rootPath) : null;
+  const testsDocs = config.enableTestsDocs ? detectTestsAndDocs(rootPath) : null;
+  const lines = [
+    "### RESUMATOR TECHNICAL STATE ###",
+    `- Modified files in session: ${Array.from(technicalState.modifiedFiles).join(", ") || "None"}`,
+    `- Recorded decisions: ${Array.from(technicalState.recordedDecisions).join(" | ") || "None"}`,
+  ];
+  if (depsLine) lines.push("", "### PROJECT METADATA ###", depsLine);
+  if (testsDocs) lines.push("", "### TESTS & DOCS ###", testsDocs);
+  return lines.join("\n");
 }
 
 function generateBoundedTree(dirPath, config) {
@@ -483,101 +529,95 @@ ${depsBlock}${testsDocsBlock}${gitBlock}### PERSISTENT TECHNICAL STATE ###
 // 5. MAIN OPENCODE PLUGIN
 // ============================================================================
 async function OpenCodeContextCompressorPlugin(context) {
-  const ROOT_PATH = process.cwd();
+  const ROOT_PATH = context?.directory || process.cwd();
 
   // Initialize token counter (tiktoken, with char/4 fallback if it cannot load)
   await initTokenCounter();
 
   // Load configuration dynamically from opencode.json
   const config = loadUserConfig(ROOT_PATH);
-  const tokenTriggerThreshold = Math.floor(config.totalModelLimit * config.triggerPercentage);
 
   // Restore persisted session state from disk (survives terminal close/reopen)
   technicalState = loadTechnicalState(ROOT_PATH);
 
+  let lastUsage = { tokens: 0, percentage: "0.0" };
+
   return {
-    hooks: {
-      config: (cfg) => {
-        cfg.command = cfg.command || {};
-        cfg.command["resumator-clear"] = {
-          description: "Reset saved files/decisions after a focus change",
-          template: "The user changed focus. Reset the saved modified files and recorded decisions. Acknowledge briefly.",
-        };
-        cfg.command["resumator-context"] = {
-          description: "Inject the current project context (tree, git status, metadata, tests/docs, technical state)",
-          template: "The user requested the current project context. Review it and acknowledge.",
-        };
-      },
-      "command.execute.before": async ({ command }, output) => {
-        if (command === "resumator-clear") {
-          resetTechnicalState();
-          saveTechnicalState(ROOT_PATH);
-          output.parts = [
-            {
-              type: "text",
-              text: "[Resumator] Session state cleared: modified files and recorded decisions reset.",
-            },
-          ];
-        } else if (command === "resumator-context") {
-          const currentTokens = estimateTokens(output.parts);
-          const currentPercentage = ((currentTokens / config.totalModelLimit) * 100).toFixed(1);
-          output.parts = [
-            {
-              type: "text",
-              text: buildContextBlock(ROOT_PATH, config, currentPercentage, currentTokens),
-            },
-          ];
-        }
-      },
-      "chat:before-send": async ({ messages, client }) => {
-        messages.forEach((msg) => extractCriticalData(msg.content));
+    config: (cfg) => {
+      cfg.command = cfg.command || {};
+      cfg.command["resumator-clear"] = {
+        description: "Reset saved files/decisions after a focus change",
+        template: "The user changed focus. Reset the saved modified files and recorded decisions. Acknowledge briefly.",
+      };
+      cfg.command["resumator-context"] = {
+        description: "Inject the current project context (tree, git status, metadata, tests/docs, technical state)",
+        template: "The user requested the current project context. Review it and acknowledge.",
+      };
+    },
+
+    "command.execute.before": async ({ command }, output) => {
+      if (command === "resumator-clear") {
+        resetTechnicalState();
         saveTechnicalState(ROOT_PATH);
-
-        const cleanMessages = messages.filter(
-          (msg) => !(msg.role === "system" && typeof msg.content === "string" && msg.content.includes(SYSTEM_TAG)),
-        );
-
-        const currentTokens = estimateTokens(cleanMessages);
+        output.parts = [
+          {
+            type: "text",
+            text: "[Resumator] Session state cleared: modified files and recorded decisions reset.",
+          },
+        ];
+      } else if (command === "resumator-context") {
+        const currentTokens = estimateTokens(output.parts);
         const currentPercentage = ((currentTokens / config.totalModelLimit) * 100).toFixed(1);
+        output.parts = [
+          {
+            type: "text",
+            text: buildContextBlock(ROOT_PATH, config, currentPercentage, currentTokens),
+          },
+        ];
+      }
+    },
 
-        let processedHistory = [...cleanMessages];
+    "experimental.chat.messages.transform": async (_input, output) => {
+      const messages = output?.messages || [];
+      extractCriticalDataFromMessages(messages);
+      const currentTokens = estimateTokens(messages);
+      lastUsage = {
+        tokens: currentTokens,
+        percentage: ((currentTokens / config.totalModelLimit) * 100).toFixed(1),
+      };
+      saveTechnicalState(ROOT_PATH);
+    },
 
-        if (currentTokens >= tokenTriggerThreshold && cleanMessages.length > config.keepLatest + 1) {
-          const messagesToSummarize = cleanMessages.slice(0, cleanMessages.length - config.keepLatest);
-          const recentMessages = cleanMessages.slice(cleanMessages.length - config.keepLatest);
+    "experimental.chat.system.transform": async (_input, output) => {
+      if (!output || !Array.isArray(output.system)) return;
+      output.system = output.system.filter(
+        (entry) => !(typeof entry === "string" && entry.includes(SYSTEM_TAG)),
+      );
+      output.system.push(
+        buildContextBlock(ROOT_PATH, config, lastUsage.percentage, lastUsage.tokens),
+      );
+    },
 
-          const summaryResponse = await client.chat({
-            messages: [
-              ...messagesToSummarize,
-              {
-                role: "user",
-                content:
-                  "Summarize the conversations, requests, and progress so far into a concise summary. Do not include file structure or decisions already recorded in system memory.",
-              },
-            ],
-          });
-
-          processedHistory = [
-            {
-              role: "system",
-              content: `[AUTOMATIC CONTEXT SUMMARY - ${config.triggerPercentage * 100}% TRIGGER REACHED]:\n${summaryResponse.content}`,
-            },
-            ...recentMessages,
-          ];
-        }
-
-        const systemPrompt = {
-          role: "system",
-          content: buildContextBlock(ROOT_PATH, config, currentPercentage, currentTokens),
-        };
-
-        return {
-          messages: [systemPrompt, ...processedHistory],
-        };
-      },
+    "experimental.session.compacting": async (_input, output) => {
+      if (!output) return;
+      if (!Array.isArray(output.context)) output.context = [];
+      output.context.push(buildCompactionContext(ROOT_PATH, config));
     },
   };
 }
 
-export { loadIgnoreMatcher, generateBoundedTree, buildContextBlock, analyzeProjectDependencies, detectTestsAndDocs, resetTechnicalState, loadTechnicalState, saveTechnicalState, OpenCodeContextCompressorPlugin };
+export {
+  loadIgnoreMatcher,
+  generateBoundedTree,
+  buildContextBlock,
+  buildCompactionContext,
+  analyzeProjectDependencies,
+  detectTestsAndDocs,
+  resetTechnicalState,
+  loadTechnicalState,
+  saveTechnicalState,
+  estimateTokens,
+  extractCriticalDataFromMessages,
+  OpenCodeContextCompressorPlugin,
+};
 export default OpenCodeContextCompressorPlugin;

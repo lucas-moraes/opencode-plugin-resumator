@@ -1,7 +1,7 @@
 {
   "name": "opencode-plugin-resumator",
-  "version": "0.5.5",
-  "description": "An automated OpenCode plugin for context compression, project tree mapping, and technical state retention triggered at 30% context capacity.",
+  "version": "0.6.0",
+  "description": "OpenCode plugin for per-turn project context injection, technical state retention, and native compaction enrichment.",
   "author": "Lucas Moraes",
   "type": "module",
   "main": "./index.js",

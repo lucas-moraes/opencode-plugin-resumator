@@ -7,19 +7,29 @@ import os from "os";
 
 const pluginModule = await import("./index.internal.js");
 
-function freshContext() {
-  return {
-    messages: [
-      { role: "user", content: "Hello world, this is a short test message." },
-      { role: "assistant", content: "Understood. I will proceed with the task." },
-    ],
-  };
+function sessionMessages(texts) {
+  return texts.map((text, i) => ({
+    info: { role: i % 2 === 0 ? "user" : "assistant", id: `m${i}` },
+    parts: [{ type: "text", text }],
+  }));
 }
 
-test("plugin is callable and returns a chat:before-send hook", async () => {
+async function runTransform(plugin, texts) {
+  const output = { messages: sessionMessages(texts) };
+  await plugin["experimental.chat.messages.transform"]({}, output);
+  const sysOut = { system: ["base system"] };
+  await plugin["experimental.chat.system.transform"]({}, sysOut);
+  return sysOut.system[sysOut.system.length - 1];
+}
+
+test("plugin returns top-level OpenCode hooks (not nested under hooks)", async () => {
   const plugin = await pluginModule.default({});
-  assert.ok(plugin.hooks, "plugin exposes hooks");
-  assert.equal(typeof plugin.hooks["chat:before-send"], "function");
+  assert.equal(plugin.hooks, undefined, "must not nest under .hooks");
+  assert.equal(typeof plugin.config, "function");
+  assert.equal(typeof plugin["command.execute.before"], "function");
+  assert.equal(typeof plugin["experimental.chat.messages.transform"], "function");
+  assert.equal(typeof plugin["experimental.chat.system.transform"], "function");
+  assert.equal(typeof plugin["experimental.session.compacting"], "function");
 });
 
 test("token counting matches real tiktoken counts (not raw char/4)", async () => {
@@ -29,52 +39,60 @@ test("token counting matches real tiktoken counts (not raw char/4)", async () =>
   enc.free();
 
   const plugin = await pluginModule.default({});
-  const res = await plugin.hooks["chat:before-send"]({
-    messages: [{ role: "user", content }],
-    client: { chat: async () => ({ content: "summary" }) },
-  });
-
-  const sys = res.messages[0].content;
+  const sys = await runTransform(plugin, [content]);
   const match = sys.match(/\((\d+) tokens\)/);
   assert.ok(match, "reports token count in system prompt");
   assert.equal(Number(match[1]), expected);
 });
 
-test("system prompt includes project structure and technical state", async () => {
+test("system transform injects project structure and technical state", async () => {
   const plugin = await pluginModule.default({});
-  const res = await plugin.hooks["chat:before-send"]({
-    ...freshContext(),
-    client: { chat: async () => ({ content: "summary" }) },
-  });
-
-  const sys = res.messages[0].content;
+  const sys = await runTransform(plugin, ["Hello world, this is a short test message."]);
   assert.match(sys, /### PROJECT STRUCTURE ###/);
   assert.match(sys, /### PERSISTENT TECHNICAL STATE ###/);
   assert.match(sys, /PLUGIN_OPENCODE_CONTEXT_HEADER/);
 });
 
-test("tree generation is rooted at process.cwd()", async () => {
+test("tree generation is rooted at process.cwd() by default", async () => {
   const plugin = await pluginModule.default({});
-  const res = await plugin.hooks["chat:before-send"]({
-    ...freshContext(),
-    client: { chat: async () => ({ content: "summary" }) },
-  });
-  const sys = res.messages[0].content;
+  const sys = await runTransform(plugin, ["Hello"]);
   assert.ok(fs.existsSync(path.join(process.cwd(), "package.json")), "cwd is project root");
   assert.match(sys, /package\.json/);
 });
 
+test("plugin prefers context.directory over process.cwd()", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "resumator-"));
+  try {
+    fs.writeFileSync(path.join(root, "unique-root-marker.txt"), "");
+    const plugin = await pluginModule.default({ directory: root });
+    const sys = await runTransform(plugin, ["Hello"]);
+    assert.match(sys, /unique-root-marker\.txt/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("system prompt includes git status when in a git repo", async () => {
   const plugin = await pluginModule.default({});
-  const res = await plugin.hooks["chat:before-send"]({
-    ...freshContext(),
-    client: { chat: async () => ({ content: "summary" }) },
-  });
-  const sys = res.messages[0].content;
+  const sys = await runTransform(plugin, ["Hello"]);
   assert.match(sys, /### GIT STATUS ###/);
   assert.match(sys, /Recent commits:/);
-  // The git block always carries a branch heading — a named branch or HEAD (detached).
   assert.match(sys, /^[A-Za-z][\w./-]*|\bHEAD\b/m);
+});
+
+test("system transform strips previous SYSTEM_TAG entries before re-injecting", async () => {
+  const plugin = await pluginModule.default({});
+  await plugin["experimental.chat.messages.transform"]({}, { messages: sessionMessages(["hi"]) });
+  const sysOut = {
+    system: [
+      "base",
+      `${pluginModule.buildContextBlock(process.cwd(), { totalModelLimit: 128000 }, "1.0", 10)}\nold`,
+    ],
+  };
+  await plugin["experimental.chat.system.transform"]({}, sysOut);
+  const tagged = sysOut.system.filter((s) => typeof s === "string" && s.includes("PLUGIN_OPENCODE_CONTEXT_HEADER"));
+  assert.equal(tagged.length, 1);
+  assert.ok(sysOut.system.includes("base"));
 });
 
 test("tree omits paths from .gitignore and default ignores", () => {
@@ -217,10 +235,10 @@ test("detectTestsAndDocs returns null when nothing found", () => {
   }
 });
 
-test("config hook registers the resumator-clear command", async () => {
+test("config hook registers the resumator commands", async () => {
   const plugin = await pluginModule.default({});
   const cfg = {};
-  await plugin.hooks.config(cfg);
+  await plugin.config(cfg);
   assert.ok(cfg.command, "command map is created");
   assert.ok(cfg.command["resumator-clear"], "resumator-clear is registered");
   assert.equal(cfg.command["resumator-clear"].description, "Reset saved files/decisions after a focus change");
@@ -236,7 +254,7 @@ test("config hook registers the resumator-clear command", async () => {
 test("command.execute.before clears state and replaces parts for resumator-clear", async () => {
   const plugin = await pluginModule.default({});
   const output = { parts: [{ type: "text", text: "original" }] };
-  await plugin.hooks["command.execute.before"](
+  await plugin["command.execute.before"](
     { command: "resumator-clear", sessionID: "s", arguments: "" },
     output,
   );
@@ -247,7 +265,7 @@ test("command.execute.before clears state and replaces parts for resumator-clear
 test("command.execute.before injects context block for resumator-context", async () => {
   const plugin = await pluginModule.default({});
   const output = { parts: [{ type: "text", text: "original" }] };
-  await plugin.hooks["command.execute.before"](
+  await plugin["command.execute.before"](
     { command: "resumator-context", sessionID: "s", arguments: "" },
     output,
   );
@@ -273,59 +291,70 @@ test("buildContextBlock returns the full context block", async () => {
 test("command.execute.before leaves other commands untouched", async () => {
   const plugin = await pluginModule.default({});
   const output = { parts: [{ type: "text", text: "original" }] };
-  await plugin.hooks["command.execute.before"]({ command: "other", sessionID: "s", arguments: "" }, output);
+  await plugin["command.execute.before"]({ command: "other", sessionID: "s", arguments: "" }, output);
   assert.equal(output.parts[0].text, "original");
 });
 
-test("resetTechnicalState clears modified files and decisions", async () => {
+test("messages transform extracts files/decisions; clear resets them", async () => {
   const plugin = await pluginModule.default({});
-  const hook = plugin.hooks["chat:before-send"];
 
-  const send = async (content) => {
-    const res = await hook({ messages: [{ role: "user", content }], client: { chat: async () => ({ content: "s" }) } });
-    return res.messages[0].content;
-  };
-
-  const sys1 = await send("Worked on src/app.js. Decision: use Result monad.");
+  const sys1 = await runTransform(plugin, ["Worked on src/app.js. Decision: use Result monad."]);
   assert.match(sys1, /src\/app\.js/);
   assert.match(sys1, /use Result monad/);
 
   const output = { parts: [{ type: "text", text: "x" }] };
-  await plugin.hooks["command.execute.before"]({ command: "resumator-clear", sessionID: "s", arguments: "" }, output);
+  await plugin["command.execute.before"]({ command: "resumator-clear", sessionID: "s", arguments: "" }, output);
 
-  const sys2 = await send("hello");
+  const sys2 = await runTransform(plugin, ["hello"]);
   assert.match(sys2, /Modified files in session: None/);
   assert.match(sys2, /Recorded decisions: None/);
+});
+
+test("session.compacting injects technical state context", async () => {
+  const plugin = await pluginModule.default({});
+  await plugin["experimental.chat.messages.transform"](
+    {},
+    { messages: sessionMessages(["Edited src/comp.js. Decision: keep TOON."]) },
+  );
+  const output = { context: [] };
+  await plugin["experimental.session.compacting"]({ sessionID: "s" }, output);
+  assert.equal(output.context.length, 1);
+  assert.match(output.context[0], /### RESUMATOR TECHNICAL STATE ###/);
+  assert.match(output.context[0], /src\/comp\.js/);
+  assert.match(output.context[0], /keep TOON/);
+});
+
+test("estimateTokens supports legacy content and session parts shapes", () => {
+  const a = pluginModule.estimateTokens([{ role: "user", content: "abcd" }]);
+  const b = pluginModule.estimateTokens([{ info: { role: "user" }, parts: [{ type: "text", text: "abcd" }] }]);
+  const c = pluginModule.estimateTokens([{ type: "text", text: "abcd" }]);
+  assert.equal(a, b);
+  assert.equal(b, c);
+  assert.ok(a > 0);
 });
 
 test("saveTechnicalState and loadTechnicalState round-trip (TOON)", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "resumator-"));
   try {
-    // Populate module state through a chat send (also persists to repo cwd),
-    // then exercise save/load helpers against the temp root.
     const out = { parts: [] };
-    return (async () => {
-      const p = await pluginModule.default({});
-      await p.hooks["chat:before-send"]({
-        messages: [{ role: "user", content: "Edited src/a.js. Decision: use X." }],
-        client: { chat: async () => ({ content: "s" }) },
-      });
+    const p = await pluginModule.default({});
+    await p["experimental.chat.messages.transform"](
+      {},
+      { messages: sessionMessages(["Edited src/a.js. Decision: use X."]) },
+    );
 
-      // Copy the freshly-saved TOON file into the temp root to simulate persisted state
-      const srcFile = path.join(process.cwd(), ".opencode", "resumator-state.toon");
-      fs.mkdirSync(path.join(root, ".opencode"), { recursive: true });
-      fs.copyFileSync(srcFile, path.join(root, ".opencode", "resumator-state.toon"));
-      assert.match(fs.readFileSync(path.join(root, ".opencode", "resumator-state.toon"), "utf8"), /^modifiedFiles\[\d+\]:/);
+    const srcFile = path.join(process.cwd(), ".opencode", "resumator-state.toon");
+    fs.mkdirSync(path.join(root, ".opencode"), { recursive: true });
+    fs.copyFileSync(srcFile, path.join(root, ".opencode", "resumator-state.toon"));
+    assert.match(fs.readFileSync(path.join(root, ".opencode", "resumator-state.toon"), "utf8"), /^modifiedFiles\[\d+\]:/);
 
-      const loaded = pluginModule.loadTechnicalState(root);
-      assert.ok([...loaded.modifiedFiles].includes("src/a.js"));
-      assert.ok([...loaded.recordedDecisions].some((d) => d.includes("use X")));
+    const loaded = pluginModule.loadTechnicalState(root);
+    assert.ok([...loaded.modifiedFiles].includes("src/a.js"));
+    assert.ok([...loaded.recordedDecisions].some((d) => d.includes("use X")));
 
-      // clear + persist via command hook (writes to repo cwd), then verify helpers
-      await p.hooks["command.execute.before"]({ command: "resumator-clear" }, out);
-      const cleared = pluginModule.loadTechnicalState(process.cwd());
-      assert.deepEqual([...cleared.modifiedFiles], []);
-    })();
+    await p["command.execute.before"]({ command: "resumator-clear" }, out);
+    const cleared = pluginModule.loadTechnicalState(process.cwd());
+    assert.deepEqual([...cleared.modifiedFiles], []);
   } finally {
     fs.rmSync(path.join(process.cwd(), ".opencode"), { recursive: true, force: true });
     fs.rmSync(root, { recursive: true, force: true });
@@ -367,7 +396,6 @@ test("loadTechnicalState migrates legacy JSON state to TOON", () => {
     const state = pluginModule.loadTechnicalState(root);
     assert.deepEqual([...state.modifiedFiles], ["src/legacy.js"]);
     assert.deepEqual([...state.recordedDecisions], ["Decision: keep"]);
-    // legacy removed, TOON created
     assert.ok(!fs.existsSync(path.join(root, ".opencode", "resumator-state.json")));
     assert.ok(fs.existsSync(path.join(root, ".opencode", "resumator-state.toon")));
   } finally {
