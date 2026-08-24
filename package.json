@@ -1,6 +1,6 @@
 {
   "name": "opencode-plugin-resumator",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "OpenCode plugin for per-turn project context injection, technical state retention, and native compaction enrichment.",
   "author": "Lucas Moraes",
   "type": "module",

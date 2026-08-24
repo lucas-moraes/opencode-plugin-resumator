@@ -556,24 +556,23 @@ async function OpenCodeContextCompressorPlugin(context) {
     },
 
     "command.execute.before": async ({ command }, output) => {
+      // OpenCode keeps the caller's `parts` reference and ignores trigger's return.
+      // Mutate the array in place — never reassign output.parts.
+      if (!output || !Array.isArray(output.parts)) return;
       if (command === "resumator-clear") {
         resetTechnicalState();
         saveTechnicalState(ROOT_PATH);
-        output.parts = [
-          {
-            type: "text",
-            text: "[Resumator] Session state cleared: modified files and recorded decisions reset.",
-          },
-        ];
+        output.parts.splice(0, output.parts.length, {
+          type: "text",
+          text: "[Resumator] Session state cleared: modified files and recorded decisions reset.",
+        });
       } else if (command === "resumator-context") {
         const currentTokens = estimateTokens(output.parts);
         const currentPercentage = ((currentTokens / config.totalModelLimit) * 100).toFixed(1);
-        output.parts = [
-          {
-            type: "text",
-            text: buildContextBlock(ROOT_PATH, config, currentPercentage, currentTokens),
-          },
-        ];
+        output.parts.splice(0, output.parts.length, {
+          type: "text",
+          text: buildContextBlock(ROOT_PATH, config, currentPercentage, currentTokens),
+        });
       }
     },
 
@@ -589,10 +588,15 @@ async function OpenCodeContextCompressorPlugin(context) {
     },
 
     "experimental.chat.system.transform": async (_input, output) => {
+      // OpenCode keeps the caller's `system` reference and ignores trigger's return.
+      // Mutate the array in place — never reassign output.system.
       if (!output || !Array.isArray(output.system)) return;
-      output.system = output.system.filter(
-        (entry) => !(typeof entry === "string" && entry.includes(SYSTEM_TAG)),
-      );
+      for (let i = output.system.length - 1; i >= 0; i--) {
+        const entry = output.system[i];
+        if (typeof entry === "string" && entry.includes(SYSTEM_TAG)) {
+          output.system.splice(i, 1);
+        }
+      }
       output.system.push(
         buildContextBlock(ROOT_PATH, config, lastUsage.percentage, lastUsage.tokens),
       );

@@ -253,26 +253,42 @@ test("config hook registers the resumator commands", async () => {
 
 test("command.execute.before clears state and replaces parts for resumator-clear", async () => {
   const plugin = await pluginModule.default({});
-  const output = { parts: [{ type: "text", text: "original" }] };
+  const parts = [{ type: "text", text: "original" }];
+  const output = { parts };
   await plugin["command.execute.before"](
     { command: "resumator-clear", sessionID: "s", arguments: "" },
     output,
   );
-  assert.equal(output.parts.length, 1);
-  assert.match(output.parts[0].text, /Session state cleared/);
+  assert.strictEqual(output.parts, parts, "must mutate parts in place (OpenCode keeps caller ref)");
+  assert.equal(parts.length, 1);
+  assert.match(parts[0].text, /Session state cleared/);
 });
 
 test("command.execute.before injects context block for resumator-context", async () => {
   const plugin = await pluginModule.default({});
-  const output = { parts: [{ type: "text", text: "original" }] };
+  const parts = [{ type: "text", text: "original" }];
+  const output = { parts };
   await plugin["command.execute.before"](
     { command: "resumator-context", sessionID: "s", arguments: "" },
     output,
   );
-  assert.equal(output.parts.length, 1);
-  const text = output.parts[0].text;
+  assert.strictEqual(output.parts, parts, "must mutate parts in place (OpenCode keeps caller ref)");
+  assert.equal(parts.length, 1);
+  const text = parts[0].text;
   assert.match(text, /### PROJECT STRUCTURE ###/);
   assert.match(text, /### PERSISTENT TECHNICAL STATE ###/);
+});
+
+test("system.transform mutates caller system array in place", async () => {
+  const plugin = await pluginModule.default({});
+  await plugin["experimental.chat.messages.transform"]({}, { messages: sessionMessages(["hi"]) });
+  const system = ["base system"];
+  const output = { system };
+  await plugin["experimental.chat.system.transform"]({}, output);
+  assert.strictEqual(output.system, system, "must mutate system in place (OpenCode keeps caller ref)");
+  assert.equal(system[0], "base system");
+  assert.match(system[system.length - 1], /PLUGIN_OPENCODE_CONTEXT_HEADER/);
+  assert.match(system[system.length - 1], /### PROJECT STRUCTURE ###/);
 });
 
 test("buildContextBlock returns the full context block", async () => {
